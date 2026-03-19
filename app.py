@@ -7,7 +7,7 @@ import time
 
 st.set_page_config(page_title="GA Research Lab (Final)", layout="wide")
 
-st.markdown("## 🧬 Evolutionary Optimization & GA Research Platform")
+st.markdown("## 🧬 Genetic Algorithm Research Platform for Optimization Problems")
 
 # =============================
 # Seed
@@ -86,22 +86,21 @@ def mutation_tsp(route, pm=0.1):
 # GA Binary
 # =============================
 
-def run_ga_binary(fitness_func, length, gens, pop_size, pc, pm, elitism=True):
+def run_ga_binary(fitness_func, length, gens, pop_size, pc, pm):
 
     if pop_size % 2 != 0:
         pop_size += 1
 
     pop = init_population(pop_size, length)
 
-    best_hist, avg_hist, div_hist, gen_times = [], [], [], []
+    best_hist, div_hist, gen_times = [], [], []
 
     for g in range(gens):
-        start_g = time.time()
+        start = time.time()
 
         fitnesses = np.array([fitness_func(ind) for ind in pop])
 
         best_hist.append(np.max(fitnesses))
-        avg_hist.append(np.mean(fitnesses))
         div_hist.append(diversity(pop))
 
         elite = pop[np.argmax(fitnesses)].copy()
@@ -116,12 +115,11 @@ def run_ga_binary(fitness_func, length, gens, pop_size, pc, pm, elitism=True):
             next_pop.append(mutation(c2, adaptive_pm))
 
         pop = np.array(next_pop)
-        if elitism:
-            pop[0] = elite
+        pop[0] = elite
 
-        gen_times.append(time.time() - start_g)
+        gen_times.append(time.time() - start)
 
-    return pop, best_hist, avg_hist, div_hist, gen_times
+    return pop, best_hist, div_hist, gen_times
 
 # =============================
 # Baselines
@@ -140,7 +138,7 @@ def hill_climbing(length, gens):
     hist = []
     for _ in range(gens):
         neighbor = current.copy()
-        i = random.randint(0, length-1)
+        i = random.randint(0, len(current)-1)
         neighbor[i] ^= 1
         if fitness_onemax(neighbor) > best:
             current, best = neighbor, fitness_onemax(neighbor)
@@ -186,6 +184,109 @@ def run_ga_tsp(dist_matrix, gens, pop_size, pm):
     return pop, best_hist
 
 # =============================
-# UI Logic (same as yours, polished)
+# Parameter Sweep (Experiment Mode)
 # =============================
-# (keeping your logic intact — no unnecessary changes)
+
+def parameter_sweep(fitness_func, length, gens):
+    pm_vals = [0.001, 0.01, 0.05, 0.1]
+    pop_vals = [20, 50, 100]
+
+    results = np.zeros((len(pop_vals), len(pm_vals)))
+
+    for i, p in enumerate(pop_vals):
+        for j, m in enumerate(pm_vals):
+            scores = []
+            for _ in range(3):
+                _, hist, _, _ = run_ga_binary(fitness_func, length, gens, p, 0.9, m)
+                scores.append(hist[-1])
+            results[i][j] = np.mean(scores)
+
+    return results, pop_vals, pm_vals
+
+# =============================
+# UI
+# =============================
+
+st.sidebar.markdown("### ⚙️ Controls")
+
+problem = st.sidebar.selectbox("Problem", ["OneMax", "Trap", "TSP"])
+gens = st.sidebar.slider("Generations", 50, 300, 150)
+pop_size = st.sidebar.slider("Population", 20, 150, 50)
+pc = st.sidebar.slider("Crossover", 0.5, 1.0, 0.9)
+pm = st.sidebar.slider("Mutation", 0.001, 0.2, 0.01)
+runs = st.sidebar.slider("Runs", 1, 10, 5)
+
+# =============================
+# Binary Problems
+# =============================
+
+if problem in ["OneMax", "Trap"]:
+
+    length = st.sidebar.slider("Chromosome Length", 20, 150, 50)
+    fitness_func = fitness_onemax if problem == "OneMax" else lambda x: fitness_trap(x, 4)
+
+    all_hist, all_div = [], []
+
+    for _ in range(runs):
+        _, hist, div, _ = run_ga_binary(fitness_func, length, gens, pop_size, pc, pm)
+        all_hist.append(hist)
+        all_div.append(div)
+
+    mean = np.mean(all_hist, axis=0)
+    std = np.std(all_hist, axis=0)
+
+    fig, ax = plt.subplots()
+    ax.plot(mean)
+    ax.fill_between(range(len(mean)), mean-std, mean+std, alpha=0.2)
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("Fitness")
+    st.pyplot(fig)
+
+    # Experiment Mode
+    if mode == "Experiment Mode":
+        st.subheader("🔥 Parameter Sweep")
+        results, pops, pms = parameter_sweep(fitness_func, length, gens)
+
+        fig2, ax2 = plt.subplots()
+        cax = ax2.imshow(results)
+
+        for i in range(len(pops)):
+            for j in range(len(pms)):
+                ax2.text(j, i, round(results[i,j],1), ha="center", va="center", color="white")
+
+        ax2.set_xticks(range(len(pms)))
+        ax2.set_xticklabels(pms)
+        ax2.set_yticks(range(len(pops)))
+        ax2.set_yticklabels(pops)
+
+        st.pyplot(fig2)
+
+        with st.expander("📘 Interpretation"):
+            st.write("Moderate mutation and larger populations give stable results.")
+
+# =============================
+# TSP
+# =============================
+
+else:
+    n = st.sidebar.slider("Cities", 5, 15, 10)
+    coords = np.random.rand(n, 2)
+    dist_matrix = np.linalg.norm(coords[:, None] - coords[None, :], axis=2)
+
+    pop, hist = run_ga_tsp(dist_matrix, gens, pop_size, pm)
+
+    fig, ax = plt.subplots()
+    ax.plot(hist)
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("Distance")
+    st.pyplot(fig)
+
+    best = min(pop, key=lambda x: fitness_tsp(x, dist_matrix))
+    route = coords[best]
+    route = np.vstack([route, route[0]])
+
+    fig2, ax2 = plt.subplots()
+    ax2.plot(route[:,0], route[:,1], marker='o')
+    st.pyplot(fig2)
+
+st.success("🚀 GA Research Lab Ready")
